@@ -32,9 +32,9 @@
 // }
 //
 #if defined(NDEBUG)
-#define VK_ENABLE_VALIDATION 1
+#define VK_ENABLE_VALIDATION 0
 #else
-#define VK_ENABLE_VALIDATION 1
+#define VK_ENABLE_VALIDATION 0
 #endif
 
 // All vkCreate* functions take an optional allocator. For now we select the default allocator by

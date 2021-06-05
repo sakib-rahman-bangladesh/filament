@@ -97,12 +97,16 @@ void selectPhysicalDevice(VulkanContext& context) {
         ASSERT_POSTCONDITION(result == VK_SUCCESS, "vkEnumerateDeviceExtensionProperties error.");
         bool supportsSwapchain = false;
         context.debugMarkersSupported = false;
+        context.debugUtilsSupported = false;
         for (uint32_t k = 0; k < extensionCount; ++k) {
             if (!strcmp(extensions[k].extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME)) {
                 supportsSwapchain = true;
             }
             if (!strcmp(extensions[k].extensionName, VK_EXT_DEBUG_MARKER_EXTENSION_NAME)) {
                 context.debugMarkersSupported = true;
+            }
+            if (!strcmp(extensions[k].extensionName, VK_EXT_DEBUG_UTILS_EXTENSION_NAME)) {
+                context.debugUtilsSupported = true;
             }
             if (!strcmp(extensions[k].extensionName, VK_KHR_PORTABILITY_SUBSET_EXTENSION_NAME)) {
                 context.portabilitySubsetSupported = true;
@@ -118,6 +122,8 @@ void selectPhysicalDevice(VulkanContext& context) {
             }
         }
         if (!supportsSwapchain) continue;
+        utils::slog.e << "prideout debugMarkersSupported = " << context.debugMarkersSupported << utils::io::endl;
+        utils::slog.e << "prideout debugUtilsSupported = " << context.debugUtilsSupported << utils::io::endl;
 
         // Bingo, we finally found a physical device that supports everything we need.
         context.physicalDevice = physicalDevice;

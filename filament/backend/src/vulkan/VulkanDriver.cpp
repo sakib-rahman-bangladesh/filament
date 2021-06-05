@@ -166,15 +166,15 @@ VulkanDriver::VulkanDriver(VulkanPlatform* platform,
     ppEnabledExtensions[enabledExtensionCount++] = "VK_KHR_surface";
     ppEnabledExtensions[enabledExtensionCount++] = "VK_KHR_get_physical_device_properties2";
 #if VK_ENABLE_VALIDATION
-#if defined(ANDROID)
     ppEnabledExtensions[enabledExtensionCount++] = "VK_EXT_debug_report";
-#else
-    ppEnabledExtensions[enabledExtensionCount++] = "VK_EXT_debug_utils";
-#endif
     if (validationFeaturesSupported) {
         ppEnabledExtensions[enabledExtensionCount++] = "VK_EXT_validation_features";
     }
 #endif
+
+    if (mContext.debugUtilsSupported) {
+        ppEnabledExtensions[enabledExtensionCount++] = "VK_EXT_debug_utils";
+    }
 
     // Request platform-specific extensions.
     for (uint32_t i = 0; i < requiredExtensionCount; ++i) {
@@ -211,12 +211,6 @@ VulkanDriver::VulkanDriver(VulkanPlatform* platform,
             vkCreateDebugReportCallbackEXT;
 
 #if VK_ENABLE_VALIDATION
-
-    // We require the VK_EXT_debug_utils instance extension on all non-Android platforms when
-    // validation is enabled.
-    #ifndef ANDROID
-    mContext.debugUtilsSupported = true;
-    #endif
 
     if (mContext.debugUtilsSupported) {
         VkDebugUtilsMessengerCreateInfoEXT createInfo = {
@@ -1336,7 +1330,8 @@ void VulkanDriver::insertEventMarker(char const* string, uint32_t len) {
             .color = {1, 1, 0, 1},
         };
         vkCmdInsertDebugUtilsLabelEXT(cmdbuffer, &labelInfo);
-    } else if (mContext.debugMarkersSupported) {
+    }
+    if (mContext.debugMarkersSupported) {
         VkDebugMarkerMarkerInfoEXT markerInfo = {};
         markerInfo.sType = VK_STRUCTURE_TYPE_DEBUG_MARKER_MARKER_INFO_EXT;
         memcpy(markerInfo.color, &MARKER_COLOR[0], sizeof(MARKER_COLOR));
@@ -1356,21 +1351,28 @@ void VulkanDriver::pushGroupMarker(char const* string, uint32_t len) {
             .color = {0, 1, 0, 1},
         };
         vkCmdBeginDebugUtilsLabelEXT(cmdbuffer, &labelInfo);
-    } else if (mContext.debugMarkersSupported) {
+    }
+    if (mContext.debugMarkersSupported) {
         VkDebugMarkerMarkerInfoEXT markerInfo = {};
         markerInfo.sType = VK_STRUCTURE_TYPE_DEBUG_MARKER_MARKER_INFO_EXT;
         memcpy(markerInfo.color, &MARKER_COLOR[0], sizeof(MARKER_COLOR));
-        markerInfo.pMarkerName = string;
-        vkCmdDebugMarkerBeginEXT(cmdbuffer, &markerInfo);
+        std::string augmented = std::string("prideout ") + string;
+        markerInfo.pMarkerName = augmented.c_str();
+
+        // const auto id = std::hash<std::thread::id>{}(std::this_thread::get_id());
+        // utils::slog.e << "prideout pushGroupMarker " << id << utils::io::endl;
+
+        vkCmdDebugMarkerBeginEXT(cmdbuffer, &markerInfo); // This is used in P4.
     }
 }
 
 void VulkanDriver::popGroupMarker(int) {
     const VkCommandBuffer cmdbuffer = mContext.commands->get().cmdbuffer;
+    if (mContext.debugMarkersSupported) {
+        vkCmdDebugMarkerEndEXT(cmdbuffer);
+    }
     if (mContext.debugUtilsSupported) {
         vkCmdEndDebugUtilsLabelEXT(cmdbuffer);
-    } else if (mContext.debugMarkersSupported) {
-        vkCmdDebugMarkerEndEXT(cmdbuffer);
     }
 }
 

@@ -22,21 +22,21 @@ using namespace filament;
 using namespace gltfio;
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_google_android_filament_gltfio_MaterialProvider_nCreateMaterialProvider(JNIEnv*, jclass,
+Java_com_google_android_filament_gltfio_UbershaderLoader_nCreateUbershaderLoader(JNIEnv*, jclass,
         jlong nativeEngine) {
     Engine* engine = (Engine*) nativeEngine;
     return (jlong) createUbershaderLoader(engine);
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_google_android_filament_gltfio_MaterialProvider_nDestroyMaterialProvider(JNIEnv*, jclass,
+Java_com_google_android_filament_gltfio_UbershaderLoader_nDestroyUbershaderLoader(JNIEnv*, jclass,
         jlong nativeProvider) {
     auto provider = (MaterialProvider*) nativeProvider;
     delete provider;
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_com_google_android_filament_gltfio_MaterialProvider_nDestroyMaterials(JNIEnv*, jclass,
+Java_com_google_android_filament_gltfio_UbershaderLoader_nDestroyMaterials(JNIEnv*, jclass,
         jlong nativeProvider) {
     auto provider = (MaterialProvider*) nativeProvider;
     provider->destroyMaterials();

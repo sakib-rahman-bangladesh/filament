@@ -16,36 +16,7 @@
 
 package com.google.android.filament.gltfio;
 
-import com.google.android.filament.Engine;
-
-import java.lang.reflect.Method;
-
-/**
- * Loads pre-generated ubershader materials that fulfill glTF requirements.
- *
- * <p>This class is used by {@link AssetLoader} to create Filament materials.
- * Client applications do not need to call methods on it.</p>
- */
-public class MaterialProvider {
-    private long mNativeObject;
-
-    /**
-     * Constructs an ubershader loader using the supplied {@link Engine}.
-     *
-     * @param engine the engine used to create materials
-     */
-    public MaterialProvider(Engine engine) {
-        long nativeEngine = engine.getNativeObject();
-        mNativeObject = nCreateMaterialProvider(nativeEngine);
-    }
-
-    /**
-     * Frees memory associated with the native material provider.
-     * */
-    public void destroy() {
-        nDestroyMaterialProvider(mNativeObject);
-        mNativeObject = 0;
-    }
+public interface MaterialProvider {
 
     /**
      * Destroys all cached materials.
@@ -53,15 +24,6 @@ public class MaterialProvider {
      * This is not called automatically when MaterialProvider is destroyed, which allows
      * clients to take ownership of the cache if desired.
      */
-    public void destroyMaterials() {
-        nDestroyMaterials(mNativeObject);
-    }
+    public void destroyMaterials();
 
-    long getNativeObject() {
-        return mNativeObject;
-    }
-
-    private static native long nCreateMaterialProvider(long nativeEngine);
-    private static native void nDestroyMaterialProvider(long nativeProvider);
-    private static native void nDestroyMaterials(long nativeProvider);
 }

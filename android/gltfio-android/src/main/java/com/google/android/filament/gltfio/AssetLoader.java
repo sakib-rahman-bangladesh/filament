@@ -45,7 +45,7 @@ import java.nio.Buffer;
  *
  *     ...
  *
- *     assetLoader = AssetLoader(engine, MaterialProvider(engine), EntityManager.get())
+ *     assetLoader = AssetLoader(engine, UbershaderLoader(engine), EntityManager.get())
  *
  *     filamentAsset = assets.open("models/lucy.gltf").use { input -&gt;
  *         val bytes = ByteArray(input.available())

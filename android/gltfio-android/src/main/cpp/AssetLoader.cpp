@@ -30,11 +30,41 @@ using namespace filament;
 using namespace gltfio;
 using namespace utils;
 
+class JavaMaterialProvider : public MaterialProvider {
+public:
+    JavaMaterialProvider(JNIEnv* env, jobject provider) {
+        //
+    }
+
+    ~JavaMaterialProvider() {}
+
+    MaterialInstance* createMaterialInstance(MaterialKey* config, UvMap* uvmap,
+            const char* label) override {
+        return nullptr;
+    }
+
+    const Material* const* getMaterials() const noexcept override {
+        return nullptr;
+    }
+
+    size_t getMaterialsCount() const noexcept override {
+        return 0;
+    }
+
+    void destroyMaterials() override {
+        // TODO
+    }
+
+    bool needsDummyData(VertexAttribute attrib) const noexcept override {
+        return false;
+    }
+};
+
 extern "C" JNIEXPORT jlong JNICALL
-Java_com_google_android_filament_gltfio_AssetLoader_nCreateAssetLoader(JNIEnv*, jclass,
-        jlong nativeEngine, jlong nativeProvider, jlong nativeEntities) {
+Java_com_google_android_filament_gltfio_AssetLoader_nCreateAssetLoader(JNIEnv* env, jclass,
+        jlong nativeEngine, jobject provider, jlong nativeEntities) {
     Engine* engine = (Engine*) nativeEngine;
-    MaterialProvider* materials = (MaterialProvider*) nativeProvider;
+    MaterialProvider* materials = new JavaMaterialProvider(env, provider);
     EntityManager* entities = (EntityManager*) nativeEntities;
     NameComponentManager* names = new NameComponentManager(*entities);
     return (jlong) AssetLoader::create({engine, materials, names, entities});
@@ -44,6 +74,7 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_google_android_filament_gltfio_AssetLoader_nDestroyAssetLoader(JNIEnv*, jclass,
         jlong nativeLoader) {
     AssetLoader* loader = (AssetLoader*) nativeLoader;
+    delete loader->getMaterialProvider();
     NameComponentManager* names = loader->getNames();
     AssetLoader::destroy(&loader);
     delete names;

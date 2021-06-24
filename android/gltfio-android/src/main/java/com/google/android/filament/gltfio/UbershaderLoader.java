@@ -17,6 +17,13 @@
 package com.google.android.filament.gltfio;
 
 import com.google.android.filament.Engine;
+import com.google.android.filament.MaterialInstance;
+import com.google.android.filament.Material;
+import com.google.android.filament.VertexBuffer;
+
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.annotation.Size;
 
 import java.lang.reflect.Method;
 
@@ -47,12 +54,38 @@ public class UbershaderLoader implements MaterialProvider {
         mNativeObject = 0;
     }
 
-    /**
-     * Destroys all cached materials.
-     *
-     * This is not called automatically when MaterialProvider is destroyed, which allows
-     * clients to take ownership of the cache if desired.
-     */
+    public @Nullable MaterialInstance createMaterialInstance(MaterialKey config,
+            @NonNull @Size(min = 8) UvSet[] uvmap, @Nullable String label) {
+        int[] uvmapInts = new int[8];
+        long nativeMaterialInstance = nCreateMaterialInstance(config, uvmapInts, label);
+        for (int i = 0; i < 8; i++) {
+            uvmap[i] = UvSet.values[uvmapInts[i]];
+        }
+        return nativeMaterialInstance == 0 ? null : new MaterialInstance(null, nativeMaterialInstance);
+    }
+
+    public @NonNull Material[] getMaterials() {
+        final int count = nGetMaterialCount(mNativeObject);
+        Material[] result = new Material[count];
+        long[] natives = new long[count];
+        nGetMaterials(mNativeObject, natives);
+        for (int i = 0; i < count; i++) {
+            result[i] = new Material(natives[i]);
+        }
+        return result;
+    }
+
+    public boolean needsDummyData(VertexBuffer.VertexAttribute attrib) {
+        switch (attrib) {
+            case UV0:
+            case UV1:
+            case COLOR:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     public void destroyMaterials() {
         nDestroyMaterials(mNativeObject);
     }
@@ -64,4 +97,7 @@ public class UbershaderLoader implements MaterialProvider {
     private static native long nCreateUbershaderLoader(long nativeEngine);
     private static native void nDestroyUbershaderLoader(long nativeProvider);
     private static native void nDestroyMaterials(long nativeProvider);
+    private static native long nCreateMaterialInstance(MaterialKey config, int[] uvmap, String label);
+    private static native int nGetMaterialCount(long nativeProvider);
+    private static native void nGetMaterials(long nativeProvider, long[] result);
 }

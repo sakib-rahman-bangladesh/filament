@@ -108,5 +108,4 @@ public interface MaterialProvider {
      * clients to take ownership of the cache if desired.
      */
     public void destroyMaterials();
-
 }

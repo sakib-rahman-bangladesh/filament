@@ -23,6 +23,7 @@
 
 #include <gltfio/AssetLoader.h>
 #include <gltfio/MaterialProvider.h>
+#include <utils/debug.h>
 
 #include "common/NioUtils.h"
 
@@ -31,28 +32,74 @@ using namespace gltfio;
 using namespace utils;
 
 class JavaMaterialProvider : public MaterialProvider {
+    JNIEnv* const mEnv;
+    const jobject mJavaProvider;
+    const Material* const*  mPreviousMaterials = nullptr;
+
+    jclass mMaterialKey;
+    jmethodID mCreateMaterialInstance;
+    jmethodID mGetMaterials;
+    jmethodID mNeedsDummyData;
+    jmethodID mDestroyMaterials;
+
 public:
-    JavaMaterialProvider(JNIEnv* env, jobject provider) {
-        //
+    JavaMaterialProvider(JNIEnv* env, jobject provider) : mEnv(env), mJavaProvider(provider) {
+        mMaterialKey = env->FindClass(
+                "com/google/android/filament/gltfio/MaterialProvider$MaterialKey");
+        mMaterialKey = (jclass) env->NewGlobalRef(mMaterialKey);
+        assert_invariant(mMaterialKey);
+
+        jclass providerClass = env->GetObjectClass(provider);
+
+        mCreateMaterialInstance = env->GetMethodID(providerClass, "createMaterialInstance",
+                "(Lcom/google/android/filament/gltfio/MaterialProvider$MaterialKey;"
+                "[Lcom/google/android/filament/gltfio/MaterialProvider$UvSet;"
+                "Ljava/lang/String;)"
+                "Lcom/google/android/filament/MaterialInstance;");
+        assert_invariant(mCreateMaterialInstance);
+
+        mGetMaterials = env->GetMethodID(providerClass, "getMaterials",
+                "()[Lcom/google/android/filament/Material;");
+        assert_invariant(mGetMaterials()
+
+        mNeedsDummyData = env->GetMethodID(providerClass, "needsDummyData",
+                "(Lcom/google/android/filament/VertexBuffer$VertexAttribute;)Z");
+        assert_invariant(mNeedsDummyData()
+
+        mDestroyMaterials = env->GetMethodID(providerClass, "destroyMaterials", "()V");
+        assert_invariant(mDestroyMaterials()
     }
 
-    ~JavaMaterialProvider() {}
+    ~JavaMaterialProvider() override {
+        mEnv->DeleteGlobalRef(mMaterialKey);
+        delete mPreviousMaterials;
+    }
 
     MaterialInstance* createMaterialInstance(MaterialKey* config, UvMap* uvmap,
             const char* label) override {
+
+        // TODO: 1. create a Java object for "MaterialKey"
+        //       2. call the method
+        //       3. modify the C++ object for "MaterialKey"
+        //       4. release the Java object for "MaterialKey" (I think)
+
         return nullptr;
     }
 
     const Material* const* getMaterials() const noexcept override {
-        return nullptr;
+        delete mPreviousMaterials;
+        mPreviousMaterials = new (const Material* const)[5];
+        // TODO: Copy over materials from the Java object
+        return mPreviousMaterials;
     }
 
     size_t getMaterialsCount() const noexcept override {
+        // TODO: getMaterialsCount
         return 0;
     }
 
     void destroyMaterials() override {
-        // TODO
+        // TODO: destroyMaterials
     }
 
     bool needsDummyData(VertexAttribute attrib) const noexcept override {

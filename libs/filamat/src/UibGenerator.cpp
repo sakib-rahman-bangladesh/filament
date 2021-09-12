@@ -51,7 +51,8 @@ UniformInterfaceBlock const& UibGenerator::getPerViewUib() noexcept  {
             // directional light
             .add("lightColorIntensity",     1, UniformInterfaceBlock::Type::FLOAT4)
             .add("sun",                     1, UniformInterfaceBlock::Type::FLOAT4)
-            .add("padding0",                1, UniformInterfaceBlock::Type::FLOAT4)
+            .add("padding0",                1, UniformInterfaceBlock::Type::FLOAT3)
+            .add("lightChannels",           1, UniformInterfaceBlock::Type::UINT)
             .add("lightDirection",          1, UniformInterfaceBlock::Type::FLOAT3)
             .add("fParamsX",                1, UniformInterfaceBlock::Type::UINT)
             // shadow
@@ -120,9 +121,9 @@ UniformInterfaceBlock const& UibGenerator::getPerRenderableUib() noexcept {
             .add("worldFromModelMatrix",       1, UniformInterfaceBlock::Type::MAT4, Precision::HIGH)
             .add("worldFromModelNormalMatrix", 1, UniformInterfaceBlock::Type::MAT3, Precision::HIGH)
             .add("morphWeights", 1, UniformInterfaceBlock::Type::FLOAT4, Precision::HIGH)
-            .add("skinningEnabled", 1, UniformInterfaceBlock::Type::INT)
-            .add("morphingEnabled", 1, UniformInterfaceBlock::Type::INT)
-            .add("screenSpaceContactShadows", 1, UniformInterfaceBlock::Type::UINT)
+            .add("flags", 1, UniformInterfaceBlock::Type::UINT)
+            .add("channels", 1, UniformInterfaceBlock::Type::UINT)
+            .add("reserved1", 1, UniformInterfaceBlock::Type::UINT)
             .add("userData", 1, UniformInterfaceBlock::Type::FLOAT)
             .build();
     return uib;

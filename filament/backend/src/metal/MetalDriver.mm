@@ -62,29 +62,33 @@ MetalDriver::MetalDriver(backend::MetalPlatform* platform) noexcept
     mContext->device = mPlatform.createDevice();
     assert_invariant(mContext->device);
 
+    initializeSupportedGpuFamilies(mContext);
+
+    utils::slog.d << "Supported GPU families: " << utils::io::endl;
+    if (mContext->highestSupportedGpuFamily.common > 0) {
+        utils::slog.d << "  MTLGPUFamilyCommon" << (int) mContext->highestSupportedGpuFamily.common << utils::io::endl;
+    }
+    if (mContext->highestSupportedGpuFamily.apple > 0) {
+        utils::slog.d << "  MTLGPUFamilyApple" << (int) mContext->highestSupportedGpuFamily.apple << utils::io::endl;
+    }
+    if (mContext->highestSupportedGpuFamily.mac > 0) {
+        utils::slog.d << "  MTLGPUFamilyMac" << (int) mContext->highestSupportedGpuFamily.mac << utils::io::endl;
+    }
+
     // In order to support texture swizzling, the GPU needs to support it and the system be running
-    // macOS 10.15+ / iOS 13+.
+    // iOS 13+.
     mContext->supportsTextureSwizzling = false;
-    if (@available(macOS 10.15, iOS 13, *)) {
-#if defined(IOS)
+    if (@available(iOS 13, *)) {
         mContext->supportsTextureSwizzling =
-                [mContext->device supportsFeatureSet:MTLFeatureSet_iOS_GPUFamily1_v1];
-#else
-        mContext->supportsTextureSwizzling =
-                [mContext->device supportsFeatureSet:MTLFeatureSet_macOS_GPUFamily2_v1];
-#endif
+            mContext->highestSupportedGpuFamily.apple >= 1 ||   // all Apple GPUs
+            mContext->highestSupportedGpuFamily.mac   >= 2;     // newer macOS GPUs
     }
 
     mContext->maxColorRenderTargets = 4;
-#if defined(IOS)
-    if ([mContext->device supportsFeatureSet:MTLFeatureSet_iOS_GPUFamily2_v1]) {
+    if (mContext->highestSupportedGpuFamily.apple >= 2 ||
+        mContext->highestSupportedGpuFamily.mac >= 1) {
         mContext->maxColorRenderTargets = 8;
     }
-#else
-    if ([mContext->device supportsFeatureSet:MTLFeatureSet_macOS_GPUFamily1_v1]) {
-        mContext->maxColorRenderTargets = 8;
-    }
-#endif
 
     // Round requested sample counts down to the nearest device-supported sample count.
     auto& sc = mContext->sampleCountLookup;
@@ -100,7 +104,7 @@ MetalDriver::MetalDriver(backend::MetalPlatform* platform) noexcept
     mContext->bufferPool = new MetalBufferPool(*mContext);
     mContext->blitter = new MetalBlitter(*mContext);
 
-    if (@available(macOS 10.14, iOS 12, *)) {
+    if (@available(iOS 12, *)) {
         mContext->timerQueryImpl = new TimerQueryFence(*mContext);
     } else {
         mContext->timerQueryImpl = new TimerQueryNoop();
@@ -110,7 +114,7 @@ MetalDriver::MetalDriver(backend::MetalPlatform* platform) noexcept
             nullptr, &mContext->textureCache);
     ASSERT_POSTCONDITION(success == kCVReturnSuccess, "Could not create Metal texture cache.");
 
-    if (@available(macOS 10.14, iOS 12, *)) {
+    if (@available(iOS 12, *)) {
         dispatch_queue_t queue = dispatch_get_global_queue(QOS_CLASS_DEFAULT, 0);
         mContext->eventListener = [[MTLSharedEventListener alloc] initWithDispatchQueue:queue];
     }
@@ -254,7 +258,7 @@ void MetalDriver::importTextureR(Handle<HwTexture> th, intptr_t i,
     ASSERT_PRECONDITION(metalTexture.mipmapLevelCount == levels,
             "Imported id<MTLTexture> levels (%d) != Filament texture levels (%d)",
             metalTexture.mipmapLevelCount, levels);
-    MTLPixelFormat filamentMetalFormat = getMetalFormat(format);
+    MTLPixelFormat filamentMetalFormat = getMetalFormat(mContext, format);
     ASSERT_PRECONDITION(metalTexture.pixelFormat == filamentMetalFormat,
             "Imported id<MTLTexture> format (%d) != Filament texture format (%d)",
             metalTexture.pixelFormat, filamentMetalFormat);
@@ -449,13 +453,12 @@ void MetalDriver::destroyBufferObject(Handle<HwBufferObject> boh) {
     if (UTILS_UNLIKELY(!boh)) {
         return;
     }
-    // TODO: we can skip this loop if we're not a uniform buffer
     auto* bo = handle_cast<MetalBufferObject>(boh);
-    for (auto& thisUniform : mContext->uniformState) {
-        if (thisUniform.buffer == bo->getBuffer()) {
-            thisUniform.bound = false;
-        }
-    }
+    // Unbind this buffer object from any uniform slots it's still bound to.
+    bo->boundUniformBuffers.forEachSetBit([this](size_t index) {
+        mContext->uniformState[index].buffer = nullptr;
+        mContext->uniformState[index].bound = false;
+    });
     destruct_handle<MetalBufferObject>(boh);
 }
 
@@ -594,7 +597,7 @@ FenceStatus MetalDriver::wait(Handle<HwFence> fh, uint64_t timeout) {
 }
 
 bool MetalDriver::isTextureFormatSupported(TextureFormat format) {
-    return MetalTexture::decidePixelFormat(mContext->device, format) != MTLPixelFormatInvalid;
+    return MetalTexture::decidePixelFormat(mContext, format) != MTLPixelFormatInvalid;
 }
 
 bool MetalDriver::isTextureSwizzleSupported() {
@@ -604,7 +607,7 @@ bool MetalDriver::isTextureSwizzleSupported() {
 bool MetalDriver::isTextureFormatMipmappable(TextureFormat format) {
     // Derived from the Metal 3.0 Feature Set Tables.
     // In order for a format to be mipmappable, it must be color-renderable and filterable.
-    MTLPixelFormat metalFormat = MetalTexture::decidePixelFormat(mContext->device, format);
+    MTLPixelFormat metalFormat = MetalTexture::decidePixelFormat(mContext, format);
     switch (metalFormat) {
         // Mipmappable across all devices:
         case MTLPixelFormatR8Unorm:
@@ -641,7 +644,7 @@ bool MetalDriver::isTextureFormatMipmappable(TextureFormat format) {
 }
 
 bool MetalDriver::isRenderTargetFormatSupported(TextureFormat format) {
-    MTLPixelFormat mtlFormat = getMetalFormat(format);
+    MTLPixelFormat mtlFormat = getMetalFormat(mContext, format);
     // RGB9E5 isn't supported on Mac as a color render target.
     return mtlFormat != MTLPixelFormatInvalid && mtlFormat != MTLPixelFormatRGB9E5Float;
 }
@@ -656,15 +659,25 @@ bool MetalDriver::isFrameBufferFetchSupported() {
 
 bool MetalDriver::isFrameTimeSupported() {
     // Frame time is calculated via hard fences, which are only available on iOS 12 and above.
-    if (@available(macOS 10.14, iOS 12, *)) {
+    if (@available(iOS 12, *)) {
         return true;
     }
     return false;
 }
 
+bool MetalDriver::isWorkaroundNeeded(Workaround workaround) {
+    switch (workaround) {
+        case Workaround::SPLIT_EASU:
+            return false;
+    }
+    return false;
+}
+
 math::float2 MetalDriver::getClipSpaceParams() {
-    // z-coordinate of clip-space is in [0,w]
-    return math::float2{ -0.5f, 0.5f };
+    // virtual and physical z-coordinate of clip-space is in [-w, 0]
+    // Note: this is actually never used (see: main.vs), but it's a backend API so we implement it
+    // properly.
+    return math::float2{ 1.0f, 0.0f };
 }
 
 uint8_t MetalDriver::getMaxDrawBuffers() {
@@ -879,8 +892,13 @@ void MetalDriver::commit(Handle<HwSwapChain> sch) {
 
 void MetalDriver::bindUniformBuffer(uint32_t index, Handle<HwBufferObject> boh) {
     auto* bo = handle_cast<MetalBufferObject>(boh);
+    auto* currentBo = mContext->uniformState[index].buffer;
+    if (currentBo) {
+        currentBo->boundUniformBuffers.unset(index);
+    }
+    bo->boundUniformBuffers.set(index);
     mContext->uniformState[index] = UniformBufferState{
-            .buffer = bo->getBuffer(),
+            .buffer = bo,
             .offset = 0,
             .bound = true
     };
@@ -889,8 +907,13 @@ void MetalDriver::bindUniformBuffer(uint32_t index, Handle<HwBufferObject> boh) 
 void MetalDriver::bindUniformBufferRange(uint32_t index, Handle<HwBufferObject> boh,
         uint32_t offset, uint32_t size) {
     auto* bo = handle_cast<MetalBufferObject>(boh);
+    auto* currentBo = mContext->uniformState[index].buffer;
+    if (currentBo) {
+        currentBo->boundUniformBuffers.unset(index);
+    }
+    bo->boundUniformBuffers.set(index);
     mContext->uniformState[index] = UniformBufferState{
-            .buffer = bo->getBuffer(),
+            .buffer = bo,
             .offset = offset,
             .bound = true
     };
@@ -915,21 +938,24 @@ void MetalDriver::popGroupMarker(int) {
 }
 
 void MetalDriver::startCapture(int) {
-#if (TARGET_OS_IOS && __IPHONE_OS_VERSION_MIN_REQUIRED < 130000) || \
-    (TARGET_OS_OSX && __MAC_OS_X_VERSION_MIN_REQUIRED < 101500)
-    [[MTLCaptureManager sharedCaptureManager] startCaptureWithDevice:mContext->device];
-#else
-    MTLCaptureDescriptor* descriptor = [MTLCaptureDescriptor new];
-    descriptor.captureObject = mContext->device;
-    descriptor.destination = MTLCaptureDestinationGPUTraceDocument;
-    descriptor.outputURL = [[NSURL alloc] initFileURLWithPath:@"filament.gputrace"];
-    NSError* error = nil;
-    [[MTLCaptureManager sharedCaptureManager] startCaptureWithDescriptor:descriptor
-                                                                       error:&error];
-    if (error) {
-        NSLog(@"%@", [error localizedDescription]);
-    }
+    if (@available(iOS 13, *)) {
+        MTLCaptureDescriptor* descriptor = [MTLCaptureDescriptor new];
+        descriptor.captureObject = mContext->device;
+        descriptor.destination = MTLCaptureDestinationGPUTraceDocument;
+        descriptor.outputURL = [[NSURL alloc] initFileURLWithPath:@"filament.gputrace"];
+        NSError* error = nil;
+        [[MTLCaptureManager sharedCaptureManager] startCaptureWithDescriptor:descriptor
+                                                                           error:&error];
+        if (error) {
+            NSLog(@"%@", [error localizedDescription]);
+        }
+    } else {
+        // This compile-time check is used to silence deprecation warnings when compiling for the
+        // iOS simulator, which only supports Metal on iOS 13.0+.
+#if (TARGET_OS_IOS && __IPHONE_OS_VERSION_MIN_REQUIRED < __IPHONE_13_0)
+        [[MTLCaptureManager sharedCaptureManager] startCaptureWithDevice:mContext->device];
 #endif
+    }
 }
 
 void MetalDriver::stopCapture(int) {
@@ -1322,11 +1348,12 @@ void MetalDriver::draw(backend::PipelineState ps, Handle<HwRenderPrimitive> rph)
 
     id<MTLCommandBuffer> cmdBuffer = getPendingCommandBuffer(mContext);
     id<MTLBuffer> metalIndexBuffer = indexBuffer->buffer.getGpuBufferForDraw(cmdBuffer);
+    size_t offset = indexBuffer->buffer.getGpuBufferStreamOffset();
     [mContext->currentRenderPassEncoder drawIndexedPrimitives:getMetalPrimitiveType(primitive->type)
                                                    indexCount:primitive->count
                                                     indexType:getIndexType(indexBuffer->elementSize)
                                                   indexBuffer:metalIndexBuffer
-                                            indexBufferOffset:primitive->offset];
+                                            indexBufferOffset:primitive->offset + offset];
 }
 
 void MetalDriver::beginTimerQuery(Handle<HwTimerQuery> tqh) {
@@ -1381,7 +1408,7 @@ void MetalDriver::enumerateBoundUniformBuffers(
         if (!thisUniform.bound) {
             continue;
         }
-        f(thisUniform, thisUniform.buffer, i);
+        f(thisUniform, thisUniform.buffer->getBuffer(), i);
     }
 }
 

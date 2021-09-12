@@ -18,6 +18,7 @@
 
 #include "MetalBlitter.h"
 #include "MetalEnums.h"
+#include "MetalUtils.h"
 
 #include <filament/SwapChain.h>
 
@@ -380,9 +381,9 @@ MetalTexture::MetalTexture(MetalContext& context, SamplerType target, uint8_t le
         TextureUsage usage, TextureSwizzle r, TextureSwizzle g, TextureSwizzle b,
         TextureSwizzle a) noexcept
     : HwTexture(target, levels, samples, width, height, depth, format, usage), context(context),
-        externalImage(context) {
+        externalImage(context, r, g, b, a) {
 
-    devicePixelFormat = decidePixelFormat(context.device, format);
+    devicePixelFormat = decidePixelFormat(&context, format);
     ASSERT_POSTCONDITION(devicePixelFormat != MTLPixelFormatInvalid, "Texture format not supported.");
 
     const BOOL mipmapped = levels > 1;
@@ -475,25 +476,15 @@ MetalTexture::MetalTexture(MetalContext& context, SamplerType target, uint8_t le
             g == TextureSwizzle::CHANNEL_1 &&
             b == TextureSwizzle::CHANNEL_2 &&
             a == TextureSwizzle::CHANNEL_3;
-    // If texture is nil, then it must be a SAMPLER_EXTERNAL texture. We'll ignore this case for now.
-    // TODO: implement swizzling for external textures.
+    // If texture is nil, then it must be a SAMPLER_EXTERNAL texture.
+    // Swizzling for external textures is handled inside MetalExternalImage.
     if (!isDefaultSwizzle && texture && context.supportsTextureSwizzling) {
         // Even though we've already checked context.supportsTextureSwizzling, we still need to
         // guard these calls with @availability, otherwise the API usage will generate compiler
         // warnings.
-        if (@available(macOS 10.15, iOS 13, *)) {
-            NSUInteger slices = texture.arrayLength;
-            if (texture.textureType == MTLTextureTypeCube ||
-                texture.textureType == MTLTextureTypeCubeArray) {
-                slices *= 6;
-            }
-            NSUInteger mips = texture.mipmapLevelCount;
-            MTLTextureSwizzleChannels swizzle = getSwizzleChannels(r, g, b, a);
-            swizzledTextureView = [texture newTextureViewWithPixelFormat:texture.pixelFormat
-                                                             textureType:texture.textureType
-                                                                  levels:NSMakeRange(0, mips)
-                                                                  slices:NSMakeRange(0, slices)
-                                                                 swizzle:swizzle];
+        if (@available(iOS 13, *)) {
+            swizzledTextureView =
+                    createTextureViewWithSwizzle(texture, getSwizzleChannels(r, g, b, a));
         }
     }
 }
@@ -513,15 +504,22 @@ MetalTexture::~MetalTexture() {
 }
 
 
-MTLPixelFormat MetalTexture::decidePixelFormat(id<MTLDevice> device, TextureFormat format) {
-    const MTLPixelFormat metalFormat = getMetalFormat(format);
-#if !defined(IOS)
-    // Some devices do not support the Depth24_Stencil8 format, so we'll fallback to Depth32.
-    if (metalFormat == MTLPixelFormatDepth24Unorm_Stencil8 &&
-        !device.depth24Stencil8PixelFormatSupported) {
-        return MTLPixelFormatDepth32Float;
+MTLPixelFormat MetalTexture::decidePixelFormat(MetalContext* context, TextureFormat format) {
+    const MTLPixelFormat metalFormat = getMetalFormat(context, format);
+
+    // If getMetalFormat can't find an exact match for the format, it returns MTLPixelFormatInvalid.
+    if (metalFormat == MTLPixelFormatInvalid) {
+        // These MTLPixelFormats are always supported.
+        if (format == TextureFormat::DEPTH24_STENCIL8) return MTLPixelFormatDepth32Float_Stencil8;
+        if (format == TextureFormat::DEPTH16) return MTLPixelFormatDepth32Float;
+        if (format == TextureFormat::DEPTH24) {
+            // DEPTH24 isn't supported at all by Metal. First try DEPTH24_STENCIL8. If that fails,
+            // we'll fallback to DEPTH32F.
+            MTLPixelFormat fallback = getMetalFormat(context, TextureFormat::DEPTH24_STENCIL8);
+            if (fallback != MTLPixelFormatInvalid) return fallback;
+            return MTLPixelFormatDepth32Float;
+        }
     }
-#endif
 
     // Metal does not natively support 3 component textures. We'll emulate support by using a 4
     // component texture and reshaping the pixel data during upload.
@@ -591,15 +589,36 @@ void MetalTexture::loadImage(uint32_t level, MTLRegion region, PixelBufferDescri
         data = &reshapedData;
     }
 
-    uint32_t slice = 0u;
-    if (target == SamplerType::SAMPLER_2D_ARRAY) {
-        // Metal uses 'slice' (not z offset) to index into individual layers of the texture array.
-        slice = region.origin.z;
-        region.origin.z = 0;
-        loadSlice(level, region, 0, slice, *data);
-    }
+    switch (target) {
+        case SamplerType::SAMPLER_2D:
+        case SamplerType::SAMPLER_3D: {
+            loadSlice(level, region, 0, 0, *data);
+            break;
+        }
 
-    loadSlice(level, region, 0, slice, *data);
+        case SamplerType::SAMPLER_2D_ARRAY: {
+            // Metal uses 'slice' (not z offset) to index into individual layers of a texture array.
+            const uint32_t slice = region.origin.z;
+            const uint32_t sliceCount = region.size.depth;
+            region.origin.z = 0;
+            region.size.depth = 1;
+
+            const PixelBufferShape shape = PixelBufferShape::compute(*data, format, region.size, 0);
+
+            uint32_t byteOffset = 0;
+            for (uint32_t s = slice; s < slice + sliceCount; s++) {
+                loadSlice(level, region, byteOffset, s, *data);
+                byteOffset += shape.bytesPerSlice;
+            }
+
+            break;
+        }
+
+        case SamplerType::SAMPLER_CUBEMAP:
+        case SamplerType::SAMPLER_EXTERNAL: {
+            assert_invariant(false);
+        }
+    }
 
     updateLodRange(level);
 }
@@ -632,7 +651,7 @@ void MetalTexture::loadSlice(uint32_t level, MTLRegion region, uint32_t byteOffs
 
     // Earlier versions of iOS don't have the maxBufferLength query, but 256 MB is a safe bet.
     NSUInteger deviceMaxBufferLength = 256 * 1024 * 1024;   // 256 MB
-    if (@available(macOS 10.14, iOS 12, *)) {
+    if (@available(iOS 12, *)) {
         deviceMaxBufferLength = context.device.maxBufferLength;
     }
 
@@ -640,35 +659,18 @@ void MetalTexture::loadSlice(uint32_t level, MTLRegion region, uint32_t byteOffs
     // - allocate a staging buffer and perform a buffer copy
     // - allocate a staging texture and perform a texture blit
     // The buffer copy is preferred, but it cannot perform format conversions or handle large uploads.
-    // The texture blit strategy does not have those limitations, however, it cannot handle 3D
-    // or cubemap texture uploads.
+    // The texture blit strategy does not have those limitations.
 
     MTLPixelFormat stagingPixelFormat = getMetalFormat(data.format, data.type);
     const bool conversionNecessary =
             stagingPixelFormat != getMetalFormatLinear(devicePixelFormat) &&
             data.type != PixelDataType::COMPRESSED;     // compressed formats should never need conversion
 
-    const bool nonBlittableTexture =
-            target == SamplerType::SAMPLER_2D_ARRAY ||
-            target == SamplerType::SAMPLER_3D ||
-            target == SamplerType::SAMPLER_CUBEMAP;
-
     const size_t stagingBufferSize = shape.totalBytes;
     const bool largeUpload = stagingBufferSize > deviceMaxBufferLength;
 
-    // TODO: these two assertions can be removed once MetalBlitter supports blitting into 3D
-    // textures.
-
-    ASSERT_PRECONDITION(!nonBlittableTexture || !conversionNecessary,
-            "SAMPLER_2D_ARRAY, SAMPLER_3D, and SAMPLER_CUBEMAP texture uploads"
-            "do not support format conversions.");
-
-    ASSERT_PRECONDITION(!nonBlittableTexture || !largeUpload,
-            "SAMPLER_2D_ARRAY, SAMPLER_3D, and SAMPLER_CUBEMAP texture uploads"
-            "have a max size of %d bytes.", deviceMaxBufferLength);
-
     if (conversionNecessary || largeUpload) {
-        loadWithBlit(level, region, data, shape);
+        loadWithBlit(level, slice, region, data, shape);
     } else {
         loadWithCopyBuffer(level, slice, region, data, shape);
     }
@@ -702,14 +704,16 @@ void MetalTexture::loadWithCopyBuffer(uint32_t level, uint32_t slice, MTLRegion 
     [blitCommandEncoder endEncoding];
 }
 
-void MetalTexture::loadWithBlit(uint32_t level, MTLRegion region, PixelBufferDescriptor& data,
-        const PixelBufferShape& shape) {
+void MetalTexture::loadWithBlit(uint32_t level, uint32_t slice, MTLRegion region,
+        PixelBufferDescriptor& data, const PixelBufferShape& shape) {
     MTLPixelFormat stagingPixelFormat = getMetalFormat(data.format, data.type);
-    MTLTextureDescriptor* descriptor =
-            [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:stagingPixelFormat
-                                                               width:region.size.width
-                                                              height:region.size.height
-                                                           mipmapped:NO];
+    MTLTextureDescriptor* descriptor = [MTLTextureDescriptor new];
+    descriptor.textureType = region.size.depth == 1 ? MTLTextureType2D : MTLTextureType3D;
+    descriptor.pixelFormat = stagingPixelFormat;
+    descriptor.width = region.size.width;
+    descriptor.height = region.size.height;
+    descriptor.depth = region.size.depth;
+
 #if defined(IOS)
     descriptor.storageMode = MTLStorageModeShared;
 #else
@@ -717,7 +721,8 @@ void MetalTexture::loadWithBlit(uint32_t level, MTLRegion region, PixelBufferDes
 #endif
 
     id<MTLTexture> stagingTexture = [context.device newTextureWithDescriptor:descriptor];
-    MTLRegion sourceRegion = MTLRegionMake2D(0, 0, region.size.width, region.size.height);
+    MTLRegion sourceRegion = MTLRegionMake3D(0, 0, 0,
+            region.size.width, region.size.height, region.size.depth);
     [stagingTexture replaceRegion:sourceRegion
                       mipmapLevel:0
                             slice:0
@@ -737,16 +742,18 @@ void MetalTexture::loadWithBlit(uint32_t level, MTLRegion region, PixelBufferDes
         }
         NSUInteger mips = texture.mipmapLevelCount;
         destinationTexture = [texture newTextureViewWithPixelFormat:linearFormat
-                                                               textureType:texture.textureType
-                                                                    levels:NSMakeRange(0, mips)
-                                                                    slices:NSMakeRange(0, slices)];
+                                                        textureType:texture.textureType
+                                                             levels:NSMakeRange(0, mips)
+                                                             slices:NSMakeRange(0, slices)];
     }
 
     MetalBlitter::BlitArgs args;
     args.filter = SamplerMagFilter::NEAREST;
     args.source.level = 0;
+    args.source.slice = 0;
     args.source.region = sourceRegion;
     args.destination.level = level;
+    args.destination.slice = slice;
     args.destination.region = region;
     args.source.color = stagingTexture;
     args.destination.color = destinationTexture;
@@ -777,7 +784,7 @@ MetalRenderTarget::MetalRenderTarget(MetalContext* context, uint32_t width, uint
             auto& sidecar = color[i].metalTexture->msaaSidecar;
             if (!sidecar) {
                 sidecar = createMultisampledTexture(context->device, color[i].getPixelFormat(),
-                        width, height, samples);
+                        color[i].metalTexture->width, color[i].metalTexture->height, samples);
             }
         }
     }
@@ -792,11 +799,10 @@ MetalRenderTarget::MetalRenderTarget(MetalContext* context, uint32_t width, uint
         // If we were given a single-sampled texture but the samples parameter is > 1, we create
         // a multisampled sidecar texture and do a resolve automatically.
         if (samples > 1 && depth.getSampleCount() == 1) {
-            // TODO: we only need to resolve depth if the depth texture is not SAMPLEABLE.
             auto& sidecar = depth.metalTexture->msaaSidecar;
             if (!sidecar) {
                 sidecar = createMultisampledTexture(context->device, depth.getPixelFormat(),
-                        width, height, samples);
+                        depth.metalTexture->width, depth.metalTexture->height, samples);
             }
         }
     }
@@ -943,7 +949,7 @@ id<MTLTexture> MetalRenderTarget::createMultisampledTexture(id<MTLDevice> device
 MetalFence::MetalFence(MetalContext& context) : context(context), value(context.signalId++) { }
 
 void MetalFence::encode() {
-    if (@available(macOS 10.14, iOS 12, *)) {
+    if (@available(iOS 12, *)) {
         event = [context.device newSharedEvent];
         [getPendingCommandBuffer(&context) encodeSignalEvent:event value:value];
 
@@ -965,7 +971,7 @@ void MetalFence::onSignal(MetalFenceSignalBlock block) {
 }
 
 FenceStatus MetalFence::wait(uint64_t timeoutNs) {
-    if (@available(macOS 10.14, iOS 12, *)) {
+    if (@available(iOS 12, *)) {
         using ns = std::chrono::nanoseconds;
         std::unique_lock<std::mutex> guard(state->mutex);
         while (state->status == FenceStatus::TIMEOUT_EXPIRED) {

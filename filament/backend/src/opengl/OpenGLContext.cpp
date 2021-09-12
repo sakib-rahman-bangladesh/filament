@@ -77,10 +77,12 @@ OpenGLContext::OpenGLContext() noexcept {
 
     // Figure out which driver bugs we need to workaround
     if (strstr(renderer, "Adreno")) {
-        // On Adreno (As of 3/20) timer query seem to return the CPU time, not the
-        // GPU time.
+        // On Adreno (As of 3/20) timer query seem to return the CPU time, not the GPU time.
         bugs.dont_use_timer_query = true;
+        // Blits to texture arrays are failing
         bugs.disable_sidecar_blit_into_texture_array = true;
+        // early exit condition is flattened in EASU code
+        bugs.split_easu = true;
     } else if (strstr(renderer, "Mali")) {
         bugs.vao_doesnt_store_element_array_buffer_binding = true;
         if (strstr(renderer, "Mali-T")) {
@@ -273,6 +275,7 @@ void OpenGLContext::initExtensionsGLES(GLint major, GLint minor, ExtentionSet co
 
 void OpenGLContext::initExtensionsGL(GLint major, GLint minor, ExtentionSet const& exts) {
     ext.APPLE_color_buffer_packed_float = true;  // Assumes core profile.
+    ext.ARB_shading_language_packing = hasExtension(exts, "GL_ARB_shading_language_packing") || (major == 4 && minor >= 2);
     ext.EXT_clip_control = hasExtension(exts, "GL_ARB_clip_control") || (major == 4 && minor >= 5);
     ext.EXT_color_buffer_float = true;  // Assumes core profile.
     ext.EXT_color_buffer_half_float = true;  // Assumes core profile.

@@ -39,6 +39,7 @@ OpenGLProgram::OpenGLProgram(OpenGLDriver* gl, const Program& programBuilder) no
     using Shader = Program::Shader;
 
     const auto& shadersSource = programBuilder.getShadersSource();
+    OpenGLContext& context = gl->getContext();
 
     // build all shaders
     #pragma nounroll
@@ -57,19 +58,73 @@ OpenGLProgram::OpenGLProgram(OpenGLDriver* gl, const Program& programBuilder) no
         if (!shadersSource[i].empty()) {
             GLint status;
             auto shader = shadersSource[i];
-            GLint const length = (GLint)shader.size();
+            std::string temp;
+            std::string_view shaderView((const char*)shader.data(), shader.size());
 
-            if (!gl->getContext().ext.GOOGLE_cpp_style_line_directive) {
+            if (!context.ext.GOOGLE_cpp_style_line_directive) {
                 // If usages of the Google-style line directive are present, remove them, as some
                 // drivers don't allow the quotation marks.
-                if (requestsGoogleLineDirectivesExtension((const char*)shader.data(), length)) {
-                    auto temp = shader;
-                    removeGoogleLineDirectives((char*)temp.data(), length); // length is unaffected
-                    shader = std::move(temp);
+                if (UTILS_UNLIKELY(requestsGoogleLineDirectivesExtension(shaderView.data(), shaderView.size()))) {
+                    temp = shaderView; // copy string
+                    removeGoogleLineDirectives(temp.data(), temp.size()); // length is unaffected
+                    shaderView = temp;
                 }
             }
 
-            const char * const source = (const char*)shader.data();
+            if (UTILS_UNLIKELY(context.getShaderModel() == ShaderModel::GL_CORE_41 &&
+                !context.ext.ARB_shading_language_packing)) {
+                // Tragically, OpenGL 4.1 doesn't support unpackHalf2x16 and
+                // MacOS doesn't support GL_ARB_shading_language_packing
+                if (temp.empty()) {
+                    temp = shaderView; // copy string
+                }
+
+                std::string unpackHalf2x16{ R"(
+
+// these don't handle denormals, NaNs or inf
+float u16tofp32(highp uint v) {
+    v <<= 16u;
+    highp uint s = v & 0x80000000u;
+    highp uint n = v & 0x7FFFFFFFu;
+    highp uint nz = n == 0u ? 0u : 0xFFFFFFFF;
+    return uintBitsToFloat(s | ((((n >> 3u) + (0x70u << 23))) & nz));
+}
+vec2 unpackHalf2x16(highp uint v) {
+    return vec2(u16tofp32(v&0xFFFFu), u16tofp32(v>>16u));
+}
+uint fp32tou16(float val) {
+    uint f32 = floatBitsToUint(val);
+    uint f16 = 0u;
+    uint sign = (f32 >> 16) & 0x8000u;
+    int exponent = int((f32 >> 23) & 0xFFu) - 127;
+    uint mantissa = f32 & 0x007FFFFFu;
+    if (exponent > 15) {
+        f16 = sign | (0x1Fu << 10);
+    } else if (exponent > -15) {
+        exponent += 15;
+        mantissa >>= 13;
+        f16 = sign | uint(exponent << 10) | mantissa;
+    } else {
+        f16 = sign;
+    }
+    return f16;
+}
+highp uint packHalf2x16(vec2 v) {
+    highp uint x = fp32tou16(v.x);
+    highp uint y = fp32tou16(v.y);
+    return (y << 16) | x;
+}
+)"};
+                // a good point for insertion is just before the first occurrence of an uniform block
+                auto pos = temp.find("layout(std140)");
+                if (pos != std::string_view::npos) {
+                    temp.insert(pos, unpackHalf2x16);
+                }
+                shaderView = temp;
+            }
+
+            const char * const source = shaderView.data();
+            GLint length = (GLint)shaderView.length();
 
             GLuint shaderId = glCreateShader(glShaderType);
             glShaderSource(shaderId, 1, &source, &length);
@@ -126,7 +181,7 @@ OpenGLProgram::OpenGLProgram(OpenGLDriver* gl, const Program& programBuilder) no
         if (programBuilder.hasSamplers()) {
             // if we have samplers, we need to do a bit of extra work
             // activate this program so we can set all its samplers once and for all (glUniform1i)
-            gl->getContext().useProgram(program);
+            context.useProgram(program);
 
             auto const& samplerGroupInfo = programBuilder.getSamplerGroupInfo();
             auto& indicesRun = mIndicesRuns;

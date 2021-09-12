@@ -18,11 +18,13 @@ float unpack(vec2 depth) {
 
 struct SSAOInterpolationCache {
     highp vec4 weights;
+#if defined(BLEND_MODE_OPAQUE) || defined(BLEND_MODE_MASKED)
+    highp vec2 uv;
+#endif
 };
 
-float evaluateSSAO(const highp vec2 uv, out SSAOInterpolationCache cache) {
+float evaluateSSAO(inout SSAOInterpolationCache cache) {
 #if defined(BLEND_MODE_OPAQUE) || defined(BLEND_MODE_MASKED)
-
     // Upscale the SSAO buffer in real-time, in high quality mode we use a custom bilinear
     // filter. This adds about 2.0ms @ 250MHz on Pixel 4.
 
@@ -31,14 +33,14 @@ float evaluateSSAO(const highp vec2 uv, out SSAOInterpolationCache cache) {
 
         // Read four AO samples and their depths values
 #if defined(FILAMENT_HAS_FEATURE_TEXTURE_GATHER)
-        vec4 ao = textureGather(light_ssao, vec3(uv, 0.0), 0);
-        vec4 dg = textureGather(light_ssao, vec3(uv, 0.0), 1);
-        vec4 db = textureGather(light_ssao, vec3(uv, 0.0), 2);
+        vec4 ao = textureGather(light_ssao, vec3(cache.uv, 0.0), 0);
+        vec4 dg = textureGather(light_ssao, vec3(cache.uv, 0.0), 1);
+        vec4 db = textureGather(light_ssao, vec3(cache.uv, 0.0), 2);
 #else
-        vec3 s01 = textureLodOffset(light_ssao, vec3(uv, 0.0), 0.0, ivec2(0, 1)).rgb;
-        vec3 s11 = textureLodOffset(light_ssao, vec3(uv, 0.0), 0.0, ivec2(1, 1)).rgb;
-        vec3 s10 = textureLodOffset(light_ssao, vec3(uv, 0.0), 0.0, ivec2(1, 0)).rgb;
-        vec3 s00 = textureLodOffset(light_ssao, vec3(uv, 0.0), 0.0, ivec2(0, 0)).rgb;
+        vec3 s01 = textureLodOffset(light_ssao, vec3(cache.uv, 0.0), 0.0, ivec2(0, 1)).rgb;
+        vec3 s11 = textureLodOffset(light_ssao, vec3(cache.uv, 0.0), 0.0, ivec2(1, 1)).rgb;
+        vec3 s10 = textureLodOffset(light_ssao, vec3(cache.uv, 0.0), 0.0, ivec2(1, 0)).rgb;
+        vec3 s00 = textureLodOffset(light_ssao, vec3(cache.uv, 0.0), 0.0, ivec2(0, 0)).rgb;
         vec4 ao = vec4(s01.r, s11.r, s10.r, s00.r);
         vec4 dg = vec4(s01.g, s11.g, s10.g, s00.g);
         vec4 db = vec4(s01.b, s11.b, s10.b, s00.b);
@@ -52,7 +54,7 @@ float evaluateSSAO(const highp vec2 uv, out SSAOInterpolationCache cache) {
         depths *= -frameUniforms.cameraFar;
 
         // bilinear weights
-        vec2 f = fract(uv * size - 0.5);
+        vec2 f = fract(cache.uv * size - 0.5);
         vec4 b;
         b.x = (1.0 - f.x) * f.y;
         b.y = f.x * f.y;
@@ -66,7 +68,7 @@ float evaluateSSAO(const highp vec2 uv, out SSAOInterpolationCache cache) {
         cache.weights = w / (w.x + w.y + w.z + w.w);
         return dot(ao, cache.weights);
     } else {
-        return textureLod(light_ssao, vec3(uv, 0.0), 0.0).r;
+        return textureLod(light_ssao, vec3(cache.uv, 0.0), 0.0).r;
     }
 #else
     // SSAO is not applied when blending is enabled
@@ -105,7 +107,7 @@ float sphericalCapsIntersection(float cosCap1, float cosCap2, float cosDistance)
 }
 
 // This function could (should?) be implemented as a 3D LUT instead, but we need to save samplers
-float SpecularAO_Cones(vec3 bentNormal, float NoV, float visibility, float roughness) {
+float SpecularAO_Cones(vec3 bentNormal, float visibility, float roughness) {
     // Jimenez et al. 2016, "Practical Realtime Strategies for Accurate Indirect Occlusion"
 
     // aperture from ambient occlusion
@@ -126,27 +128,25 @@ float SpecularAO_Cones(vec3 bentNormal, float NoV, float visibility, float rough
 /**
  * Computes a specular occlusion term from the ambient occlusion term.
  */
-
 vec3 unpackBentNormal(vec3 bn) {
     // this must match src/materials/ssao/ssaoUtils.fs
     return bn * 2.0 - 1.0;
 }
 
-float computeSpecularAO(const highp vec2 uv, float NoV, float visibility, float roughness,
-        const in SSAOInterpolationCache cache) {
-
+float specularAO(float NoV, float visibility, float roughness, const in SSAOInterpolationCache cache) {
     float specularAO = 1.0;
 
 // SSAO is not applied when blending is enabled
 #if defined(BLEND_MODE_OPAQUE) || defined(BLEND_MODE_MASKED)
 
 #if SPECULAR_AMBIENT_OCCLUSION == SPECULAR_AO_SIMPLE
+    // TODO: Should we even bother computing this when screen space bent normals are enabled?
     specularAO = SpecularAO_Lagarde(NoV, visibility, roughness);
 #elif SPECULAR_AMBIENT_OCCLUSION == SPECULAR_AO_BENT_NORMALS
 #   if defined(MATERIAL_HAS_BENT_NORMAL)
-        specularAO = SpecularAO_Cones(shading_bentNormal, NoV, visibility, roughness);
+        specularAO = SpecularAO_Cones(shading_bentNormal, visibility, roughness);
 #   else
-        specularAO = SpecularAO_Cones(shading_normal, NoV, visibility, roughness);
+        specularAO = SpecularAO_Cones(shading_normal, visibility, roughness);
 #   endif
 #endif
 
@@ -154,14 +154,14 @@ float computeSpecularAO(const highp vec2 uv, float NoV, float visibility, float 
         vec3 bn;
         if (frameUniforms.aoSamplingQualityAndEdgeDistance > 0.0) {
 #if defined(FILAMENT_HAS_FEATURE_TEXTURE_GATHER)
-            vec4 bnr = textureGather(light_ssao, vec3(uv, 1.0), 0);
-            vec4 bng = textureGather(light_ssao, vec3(uv, 1.0), 1);
-            vec4 bnb = textureGather(light_ssao, vec3(uv, 1.0), 2);
+            vec4 bnr = textureGather(light_ssao, vec3(cache.uv, 1.0), 0);
+            vec4 bng = textureGather(light_ssao, vec3(cache.uv, 1.0), 1);
+            vec4 bnb = textureGather(light_ssao, vec3(cache.uv, 1.0), 2);
 #else
-            vec3 s01 = textureLodOffset(light_ssao, vec3(uv, 1.0), 0.0, ivec2(0, 1)).rgb;
-            vec3 s11 = textureLodOffset(light_ssao, vec3(uv, 1.0), 0.0, ivec2(1, 1)).rgb;
-            vec3 s10 = textureLodOffset(light_ssao, vec3(uv, 1.0), 0.0, ivec2(1, 0)).rgb;
-            vec3 s00 = textureLodOffset(light_ssao, vec3(uv, 1.0), 0.0, ivec2(0, 0)).rgb;
+            vec3 s01 = textureLodOffset(light_ssao, vec3(cache.uv, 1.0), 0.0, ivec2(0, 1)).rgb;
+            vec3 s11 = textureLodOffset(light_ssao, vec3(cache.uv, 1.0), 0.0, ivec2(1, 1)).rgb;
+            vec3 s10 = textureLodOffset(light_ssao, vec3(cache.uv, 1.0), 0.0, ivec2(1, 0)).rgb;
+            vec3 s00 = textureLodOffset(light_ssao, vec3(cache.uv, 1.0), 0.0, ivec2(0, 0)).rgb;
             vec4 bnr = vec4(s01.r, s11.r, s10.r, s00.r);
             vec4 bng = vec4(s01.g, s11.g, s10.g, s00.g);
             vec4 bnb = vec4(s01.b, s11.b, s10.b, s00.b);
@@ -170,13 +170,18 @@ float computeSpecularAO(const highp vec2 uv, float NoV, float visibility, float 
             bn.g = dot(bng, cache.weights);
             bn.b = dot(bnb, cache.weights);
         } else {
-            bn = textureLod(light_ssao, vec3(uv, 1.0), 0.0).xyz;
+            bn = textureLod(light_ssao, vec3(cache.uv, 1.0), 0.0).xyz;
         }
+
         bn = unpackBentNormal(bn);
         bn = normalize(bn);
-        specularAO = min(specularAO, SpecularAO_Cones(bn, NoV, visibility, roughness));
-        // For now we don't use the AO bent normal for the diffuse because the AO bent normal
-        // is currently a face normal.
+
+        float ssSpecularAO = SpecularAO_Cones(bn, visibility, roughness);
+        // Combine the specular AO from the texture with screen space specular AO
+        specularAO = min(specularAO, ssSpecularAO);
+
+        // For now we don't use the screen space AO bent normal for the diffuse because the
+        // AO bent normal is currently a face normal.
     }
 #endif
 

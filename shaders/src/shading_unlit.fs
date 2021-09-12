@@ -42,13 +42,15 @@ vec4 evaluateMaterial(const MaterialInputs material) {
 #if defined(HAS_DIRECTIONAL_LIGHTING)
 #if defined(HAS_SHADOWING)
     float visibility = 1.0;
-    if ((frameUniforms.directionalShadows & 1u) != 0u) {
-        uint cascade = getShadowCascade();
+    uint cascade = getShadowCascade();
+    bool cascadeHasVisibleShadows = bool(frameUniforms.cascades & ((1u << cascade) << 8u));
+    bool hasDirectionalShadows = bool(frameUniforms.directionalShadows & 1u);
+    if (hasDirectionalShadows && cascadeHasVisibleShadows) {
         uint layer = cascade;
         visibility = shadow(light_shadowMap, layer, getCascadeLightSpacePosition(cascade));
     }
     if ((frameUniforms.directionalShadows & 0x2u) != 0u && visibility > 0.0) {
-        if (objectUniforms.screenSpaceContactShadows != 0u) {
+        if ((objectUniforms.flags & FILAMENT_OBJECT_CONTACT_SHADOWS_BIT) != 0u) {
             visibility *= (1.0 - screenSpaceContactShadow(frameUniforms.lightDirection));
         }
     }

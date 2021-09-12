@@ -47,7 +47,7 @@ FScene::FScene(FEngine& engine) :
 FScene::~FScene() noexcept = default;
 
 
-void FScene::prepare(const mat4f& worldOriginTransform, bool shadowReceiversAreCasters) noexcept {
+void FScene::prepare(const mat4& worldOriginTransform, bool shadowReceiversAreCasters) noexcept {
     // TODO: can we skip this in most cases? Since we rely on indices staying the same,
     //       we could only skip, if nothing changed in the RCM.
 
@@ -110,7 +110,8 @@ void FScene::prepare(const mat4f& worldOriginTransform, bool shadowReceiversAreC
 
         // get the world transform
         auto ti = tcm.getInstance(e);
-        const mat4f worldTransform = worldOriginTransform * tcm.getWorldTransform(ti);
+        // this is where we go from double to float for our transforms
+        const mat4f worldTransform{ worldOriginTransform * tcm.getWorldTransformAccurate(ti) };
         const bool reversedWindingOrder = det(worldTransform.upperLeft()) < 0;
 
         // don't even draw this object if it doesn't have a transform (which shouldn't happen
@@ -120,6 +121,7 @@ void FScene::prepare(const mat4f& worldOriginTransform, bool shadowReceiversAreC
             const Box worldAABB = rigidTransform(rcm.getAABB(ri), worldTransform);
 
             auto visibility = rcm.getVisibility(ri);
+            visibility.reversedWindingOrder = reversedWindingOrder;
             if (shadowReceiversAreCasters && visibility.receiveShadows) {
                 visibility.castShadows = true;
             }
@@ -134,12 +136,12 @@ void FScene::prepare(const mat4f& worldOriginTransform, bool shadowReceiversAreC
             sceneData.push_back_unsafe(
                     ri,                             // RENDERABLE_INSTANCE
                     worldTransform,                 // WORLD_TRANSFORM
-                    reversedWindingOrder,           // REVERSED_WINDING_ORDER
                     visibility,                     // VISIBILITY_STATE
                     rcm.getSkinningBufferInfo(ri),  // SKINNING_BUFFER
                     worldAABB.center,               // WORLD_AABB_CENTER
                     0,                              // VISIBLE_MASK
                     rcm.getMorphWeights(ri),        // MORPH_WEIGHTS
+                    rcm.getChannels(ri),            // CHANNELS
                     rcm.getLayerMask(ri),           // LAYERS
                     worldAABB.halfExtent,           // WORLD_AABB_EXTENT
                     {},                             // PRIMITIVES
@@ -205,6 +207,7 @@ void FScene::updateUBOs(utils::Range<uint32_t> visibleRenderables, backend::Hand
     auto& sceneData = mRenderableData;
     for (uint32_t i : visibleRenderables) {
         mat4f const& model = sceneData.elementAt<WORLD_TRANSFORM>(i);
+        FRenderableManager::Visibility visibility = sceneData.elementAt<VISIBILITY_STATE>(i);
         const size_t offset = i * sizeof(PerRenderableUib);
 
         UniformBuffer::setUniform(buffer,
@@ -227,7 +230,7 @@ void FScene::updateUBOs(utils::Range<uint32_t> visibleRenderables, backend::Hand
         // The shading normal must be flipped for mirror transformations.
         // Basically we're shading the other side of the polygon and therefore need to negate the
         // normal, similar to what we already do to support double-sided lighting.
-        if (sceneData.elementAt<REVERSED_WINDING_ORDER>(i)) {
+        if (visibility.reversedWindingOrder) {
             m = -m;
         }
 
@@ -237,27 +240,27 @@ void FScene::updateUBOs(utils::Range<uint32_t> visibleRenderables, backend::Hand
         // Note that we cast bool to uint32_t. Booleans are byte-sized in C++, but we need to
         // initialize all 32 bits in the UBO field.
 
-        FRenderableManager::Visibility visibility = sceneData.elementAt<VISIBILITY_STATE>(i);
         hasContactShadows = hasContactShadows || visibility.screenSpaceContactShadows;
-        UniformBuffer::setUniform(buffer,
-                offset + offsetof(PerRenderableUib, skinningEnabled),
-                uint32_t(visibility.skinning));
 
         UniformBuffer::setUniform(buffer,
-                offset + offsetof(PerRenderableUib, morphingEnabled),
-                uint32_t(visibility.morphing));
-
-        UniformBuffer::setUniform(buffer,
-                offset + offsetof(PerRenderableUib, screenSpaceContactShadows),
-                uint32_t(visibility.screenSpaceContactShadows));
+                offset + offsetof(PerRenderableUib, flags),
+                PerRenderableUib::packFlags(
+                        visibility.skinning,
+                        visibility.morphing,
+                        visibility.screenSpaceContactShadows));
 
         UniformBuffer::setUniform(buffer,
                 offset + offsetof(PerRenderableUib, morphWeights),
                 sceneData.elementAt<MORPH_WEIGHTS>(i));
 
+        UniformBuffer::setUniform(buffer,
+                offset + offsetof(PerRenderableUib, channels),
+                (uint32_t)sceneData.elementAt<CHANNELS>(i));
+
         // TODO: We need to find a better way to provide the scale information per object
         UniformBuffer::setUniform(buffer,
-                offset + offsetof(PerRenderableUib, userData), sceneData.elementAt<USER_DATA>(i));
+                offset + offsetof(PerRenderableUib, userData),
+                sceneData.elementAt<USER_DATA>(i));
     }
 
     // TODO: handle static objects separately
@@ -305,11 +308,17 @@ void FScene::prepareDynamicLights(const CameraInfo& camera, ArenaScope& rootAren
         const size_t gpuIndex = i - DIRECTIONAL_LIGHTS_COUNT;
         auto li = instances[i];
         lp[gpuIndex].positionFalloff      = { spheres[i].xyz, lcm.getSquaredFalloffInv(li) };
-        lp[gpuIndex].colorIntensity       = { lcm.getColor(li), lcm.getIntensity(li) };
+        lp[gpuIndex].color                = { lcm.getColor(li), 0.0f };
         lp[gpuIndex].directionIES         = { directions[i], 0.0f };
         lp[gpuIndex].spotScaleOffset      = lcm.getSpotParams(li).scaleOffset;
-        lp[gpuIndex].shadow               = { shadowInfo[i].pack() };
-        lp[gpuIndex].type                 = lcm.isPointLight(li) ? 0u : 1u;
+        lp[gpuIndex].intensity            = lcm.getIntensity(li);
+        lp[gpuIndex].typeShadow           = LightsUib::packTypeShadow(
+                lcm.isPointLight(li) ? 0u : 1u,
+                shadowInfo[i].contactShadows,
+                shadowInfo[i].index,
+                shadowInfo[i].layer);
+        lp[gpuIndex].channels             = LightsUib::packChannels(lcm.getLightChannels(li), shadowInfo[i].castsShadows);
+        lp[gpuIndex].reserved             = {};
     }
 
     driver.updateBufferObject(lightUbh, { lp, positionalLightCount * sizeof(LightsUib) }, 0);

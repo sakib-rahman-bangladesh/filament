@@ -3,10 +3,44 @@
 This file contains one line summaries of commits that are worthy of mentioning in release notes.
 A new header is inserted each time a *tag* is created.
 
-## v1.11.3 (currently main branch)
+## v1.12.5 (currently main branch)
+
+## v1.12.4
+
+- engine: New night adaptation API on `ColorGrading`. This API can be used to create an effect that
+  that simulates color and brightness shifts in human vision in low-light conditions.
+- engine: improved performance of AMD FidelityFX FSR1 by 4.6x, it now runs in about 2ms in 4K.
+- engine: Dynamic resolution quality `MEDIUM`, `HIGH` and `ULTRA` now all use AMD FidelityFX FSR1
+
+## v1.12.3
+
+- engine: Support AMD FidelityFX Super Resolution for dynamic resolution scaling
+
+## v1.12.2
+
+- engine: New API on `ColorGrading` to enable or disable gamut mapping at will [**New API**].
+- engine: Fix typo causing ShadowOptions::shadowFar to not work properly.
+- engine: Fix, CSM glitch when using shadowMultiplier materials.
+- engine: Improve precision when computing camera projection.
+- engine: Increase the number of supported spot shadows to 14 (from 6).
+- Metal: Add texture swizzling support for external textures.
+
+## v1.12.1
+
+- engine: `double` precision translation support in TransformManager. Disabled by default.
+  Augment model (and view) matrix on `Camera` to accept double precision matrices. When enabled,
+  double precision translations allow filament to handle a very large world space [**New API**].
+- engine: Fix, Views with custom render targets are now blendable.
+
+## v1.12.0
 
 - engine: Option to automatically compute bent normals from SSAO & apply to specular AO
   [⚠️ **Material breakage**].
+- engine: New APIs: Light channels. Geometry and lights now have a channel associated to them, at
+  least one channel must match for lighting to occur [⚠️ **Material breakage**].
+- engine: Fix potential GPU crash with punctual lights near the far clipping plane.
+- materials: The `inverseTonemap` API is now an exact inverse of the Filmic tonemapper.
+- Metal: Better support for texture formats on M1 Macs.
 
 ## v1.11.2
 
@@ -14,6 +48,11 @@ A new header is inserted each time a *tag* is created.
 - engine: New tone mapper: `GenericToneMapper`, a configurable tone mapper.
 - engine: `ColorGrading::Builder::toneMapping(ColorGrading::ToneMapping)` is now deprecated.
 - engine: Removed `REINHARD` tonemap operator[⚠️ **API Change**].
+- engine: Improve s3tc_srgb detection on desktop.
+- engine: Add bilateral threshold in SSAO options.
+- gltfio: Fix AssetLoader leak, remove unwanted destructor.
+- Metal/Vulkan: Fix uploading texture data with padding or offset.
+- Metal: fix GPU crash seen with large amounts of geometry.
 
 ## v1.11.1
 

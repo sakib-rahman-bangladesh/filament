@@ -18,13 +18,13 @@
 #define TNT_FILAMENT_DETAILS_SCENE_H
 
 #include "upcast.h"
+
+#include "Allocators.h"
+#include "Culler.h"
+
 #include "components/LightManager.h"
 #include "components/RenderableManager.h"
 #include "components/TransformManager.h"
-
-#include "details/Culler.h"
-
-#include "Allocators.h"
 
 #include <filament/Box.h>
 #include <filament/Scene.h>
@@ -36,7 +36,8 @@
 #include <utils/Range.h>
 #include <utils/debug.h>
 
-#include <cstddef>
+#include <stddef.h>
+
 #include <tsl/robin_set.h>
 
 namespace filament {
@@ -84,7 +85,7 @@ public:
     ~FScene() noexcept;
     void terminate(FEngine& engine);
 
-    void prepare(const math::mat4f& worldOriginTransform, bool shadowReceiversAreCasters) noexcept;
+    void prepare(const math::mat4& worldOriginTransform, bool shadowReceiversAreCasters) noexcept;
     void prepareDynamicLights(const CameraInfo& camera, ArenaScope& arena,
             backend::Handle<backend::HwBufferObject> lightUbh) noexcept;
 
@@ -102,12 +103,12 @@ public:
     enum {
         RENDERABLE_INSTANCE,    //  4 | instance of the Renderable component
         WORLD_TRANSFORM,        // 16 | instance of the Transform component
-        REVERSED_WINDING_ORDER, //  1 | det(WORLD_TRANSFORM)<0
         VISIBILITY_STATE,       //  1 | visibility data of the component
         SKINNING_BUFFER,        //  8 | bones uniform buffer handle, count, offset
         WORLD_AABB_CENTER,      // 12 | world-space bounding box center of the renderable
         VISIBLE_MASK,           //  1 | each bit represents a visibility in a pass
         MORPH_WEIGHTS,          //  4 | floats for morphing
+        CHANNELS,               //  1 | currently light channels only
 
         // These are not needed anymore after culling
         LAYERS,                 //  1 | layers
@@ -124,12 +125,12 @@ public:
     using RenderableSoa = utils::StructureOfArrays<
             utils::EntityInstance<RenderableManager>,   // RENDERABLE_INSTANCE
             math::mat4f,                                // WORLD_TRANSFORM
-            bool,                                       // REVERSED_WINDING_ORDER
             FRenderableManager::Visibility,             // VISIBILITY_STATE
             FRenderableManager::SkinningBindingInfo,    // SKINNING_BUFFER
             math::float3,                               // WORLD_AABB_CENTER
             VisibleMaskType,                            // VISIBLE_MASK
             math::float4,                               // MORPH_WEIGHTS
+            uint8_t,                                    // CHANNELS
             uint8_t,                                    // LAYERS
             math::float3,                               // WORLD_AABB_EXTENT
             utils::Slice<FRenderPrimitive>,             // PRIMITIVES
@@ -165,21 +166,6 @@ public:
         bool contactShadows = false;    // whether this light casts contact shadows
         uint8_t index = 0;              // an index into the arrays in the Shadows uniform buffer
         uint8_t layer = 0;              // which layer of the shadow texture array to sample from
-
-        //  -- LSB -------------
-        //  castsShadows     : 1
-        //  contactShadows   : 1
-        //  index            : 4
-        //  layer            : 4
-        //  -- MSB -------------
-        uint32_t pack() const {
-            assert_invariant(index < 16);
-            assert_invariant(layer < 16);
-            return uint8_t(castsShadows)   << 0u    |
-                   uint8_t(contactShadows) << 1u    |
-                   index                   << 2u    |
-                   layer                   << 6u;
-        }
     };
 
     enum {

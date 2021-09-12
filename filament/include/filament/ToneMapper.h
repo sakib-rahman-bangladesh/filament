@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef TNT_FILAMENT_TONE_MAPPER_H
-#define TNT_FILAMENT_TONE_MAPPER_H
+#ifndef TNT_FILAMENT_TONEMAPPER_H
+#define TNT_FILAMENT_TONEMAPPER_H
 
 #include <utils/compiler.h>
 
@@ -146,10 +146,10 @@ struct UTILS_PUBLIC GenericToneMapper final : public ToneMapper {
      *                output white. Must be >= 1.0.
      */
     GenericToneMapper(
-            float contrast = 1.4f,
+            float contrast = 1.585f,
             float shoulder = 0.5f,
             float midGrayIn = 0.18f,
-            float midGrayOut = 0.266f,
+            float midGrayOut = 0.268f,
             float hdrMax = 10.0f
     ) noexcept;
     ~GenericToneMapper() noexcept final;
@@ -232,4 +232,4 @@ struct UTILS_PUBLIC DisplayRangeToneMapper final : public ToneMapper {
 
 } // namespace filament
 
-#endif // TNT_FILAMENT_TONE_MAPPER_H
+#endif // TNT_FILAMENT_TONEMAPPER_H

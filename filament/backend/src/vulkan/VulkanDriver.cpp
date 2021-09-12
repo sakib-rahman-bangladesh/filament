@@ -820,9 +820,21 @@ bool VulkanDriver::isFrameTimeSupported() {
     return true;
 }
 
+bool VulkanDriver::isWorkaroundNeeded(Workaround workaround) {
+    VkPhysicalDeviceProperties const& deviceProperties = mContext.physicalDeviceProperties;
+    switch (workaround) {
+        case Workaround::SPLIT_EASU:
+            // early exit condition is flattened in EASU code
+            return deviceProperties.vendorID == 0x5143; // Qualcomm
+    }
+    return false;
+}
+
 math::float2 VulkanDriver::getClipSpaceParams() {
-    // z-coordinate of clip-space is in [0,w]
-    return math::float2{ -0.5f, 0.5f };
+    // virtual and physical z-coordinate of clip-space is in [-w, 0]
+    // Note: this is actually never used (see: main.vs), but it's a backend API so we implement it
+    // properly.
+    return math::float2{ 1.0f, 0.0f };
 }
 
 uint8_t VulkanDriver::getMaxDrawBuffers() {

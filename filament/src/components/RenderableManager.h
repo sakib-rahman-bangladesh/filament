@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef TNT_FILAMENT_DETAILS_RENDERABLECOMPONENTMANAGER_H
-#define TNT_FILAMENT_DETAILS_RENDERABLECOMPONENTMANAGER_H
+#ifndef TNT_FILAMENT_COMPONENTS_RENDERABLEMANAGER_H
+#define TNT_FILAMENT_COMPONENTS_RENDERABLEMANAGER_H
 
 #include "upcast.h"
 
@@ -57,6 +57,7 @@ public:
         bool skinning                   : 1;
         bool morphing                   : 1;
         bool screenSpaceContactShadows  : 1;
+        bool reversedWindingOrder       : 1;
     };
 
     static_assert(sizeof(Visibility) == sizeof(uint16_t), "Visibility should be 16 bits");
@@ -108,6 +109,9 @@ public:
     inline void setMorphWeights(Instance instance, const math::float4& weights) noexcept;
     inline void setSkinningBuffer(Instance instance, FSkinningBuffer* skinningBuffer,
             size_t count, size_t offset) noexcept;
+    inline void setLightChannel(Instance instance, unsigned int channel, bool enable) noexcept;
+
+    inline bool getLightChannel(Instance instance, unsigned int channel) const noexcept;
 
     inline bool isShadowCaster(Instance instance) const noexcept;
     inline bool isShadowReceiver(Instance instance) const noexcept;
@@ -120,6 +124,7 @@ public:
     inline uint8_t getLayerMask(Instance instance) const noexcept;
     inline uint8_t getPriority(Instance instance) const noexcept;
     inline math::float4 getMorphWeights(Instance instance) const noexcept;
+    inline uint8_t getChannels(Instance instance) const noexcept;
 
     struct SkinningBindingInfo {
         backend::Handle<backend::HwBufferObject> handle;
@@ -163,6 +168,7 @@ private:
         AABB,               // user data
         LAYERS,             // user data
         MORPH_WEIGHTS,      // user data
+        CHANNELS,           // user data
         VISIBILITY,         // user data
         PRIMITIVES,         // user data
         BONES,              // filament data, UBO storing a pointer to the bones information
@@ -172,6 +178,7 @@ private:
             Box,                             // AABB
             uint8_t,                         // LAYERS
             math::float4,                    // MORPH_WEIGHTS
+            uint8_t,                         // CHANNELS
             Visibility,                      // VISIBILITY
             utils::Slice<FRenderPrimitive>,  // PRIMITIVES
             Bones                            // BONES
@@ -192,6 +199,7 @@ private:
                 Field<AABB>         aabb;
                 Field<LAYERS>       layers;
                 Field<MORPH_WEIGHTS> morphWeights;
+                Field<CHANNELS>     channels;
                 Field<VISIBILITY>   visibility;
                 Field<PRIMITIVES>   primitives;
                 Field<BONES>        bones;
@@ -317,6 +325,10 @@ math::float4 FRenderableManager::getMorphWeights(Instance instance) const noexce
     return mManager[instance].morphWeights;
 }
 
+uint8_t FRenderableManager::getChannels(Instance instance) const noexcept {
+    return mManager[instance].channels;
+}
+
 Box const& FRenderableManager::getAABB(Instance instance) const noexcept {
     return mManager[instance].aabb;
 }
@@ -348,4 +360,4 @@ size_t FRenderableManager::getPrimitiveCount(Instance instance, uint8_t level) c
 
 } // namespace filament
 
-#endif // TNT_FILAMENT_DETAILS_RENDERABLECOMPONENTMANAGER_H
+#endif // TNT_FILAMENT_COMPONENTS_RENDERABLEMANAGER_H

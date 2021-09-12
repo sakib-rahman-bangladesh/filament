@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef TNT_FILAMENT_RENDERABLECOMPONENTMANAGER_H
-#define TNT_FILAMENT_RENDERABLECOMPONENTMANAGER_H
+#ifndef TNT_FILAMENT_RENDERABLEMANAGER_H
+#define TNT_FILAMENT_RENDERABLEMANAGER_H
 
 #include <filament/Box.h>
 #include <filament/FilamentAPI.h>
@@ -219,6 +219,14 @@ public:
         Builder& culling(bool enable) noexcept;
 
         /**
+         * Enables or disables a light channel. Light channel 0 is enabled by default.
+         *
+         * @param channel Light channel to enable or disable, between 0 and 7.
+         * @param enable Whether to enable or disable the light channel.
+         */
+        Builder& lightChannel(unsigned int channel, bool enable = true) noexcept;
+
+        /**
          * Controls if this renderable casts shadows, false by default.
          *
          * If the View's shadow type is set to ShadowType::VSM, castShadows should only be disabled
@@ -380,6 +388,22 @@ public:
      * \see Builder::culling()
      */
     void setCulling(Instance instance, bool enable) noexcept;
+
+    /**
+     * Enables or disables a light channel.
+     * Light channel 0 is enabled by default.
+     *
+     * \see Builder::lightChannel()
+     */
+    void setLightChannel(Instance instance, unsigned int channel, bool enable) noexcept;
+
+    /**
+     * Returns whether a light channel is enabled on a specified renderable.
+     * @param instance Instance of the component obtained from getInstance().
+     * @param channel  Light channel to query
+     * @return         true if the light channel is enabled, false otherwise
+     */
+    bool getLightChannel(Instance instance, unsigned int channel) const noexcept;
 
     /**
      * Changes whether or not the renderable casts shadows.
@@ -558,4 +582,4 @@ Box RenderableManager::computeAABB(VECTOR const* vertices, INDEX const* indices,
 
 } // namespace filament
 
-#endif // TNT_FILAMENT_RENDERABLECOMPONENTMANAGER_H
+#endif // TNT_FILAMENT_RENDERABLEMANAGER_H
